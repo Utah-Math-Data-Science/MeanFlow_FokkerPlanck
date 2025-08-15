@@ -6,7 +6,6 @@ from abc import ABC, abstractmethod
 from typing import Optional
 from torch.nn.utils import clip_grad_norm_
 
-from entropy import  compute_batch_entropy 
 
 
 class Trainer(ABC):
@@ -47,7 +46,9 @@ class MeanFlowMatchingTrainer(Trainer):
                  clean_trajs: list,
                  noisy_trajs: list,
                  batch_size: int,
-                 n_epochs: int
+                 n_epochs: int,
+                 experiment: str,
+                 step: int
                 ):
         
         super().__init__(model)
@@ -57,31 +58,25 @@ class MeanFlowMatchingTrainer(Trainer):
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.opt = opt
         self.n_epochs = n_epochs
+        self.experiment = experiment
+        self.step = step
+    def sample_t_and_r_indices(self, batch_size, step, epoch):
 
-    def sample_t_and_r_indices(self, batch_size, epoch):
-        """
-        Sliding window that moves from [0,250] → [4750,5000] over training
-        while maintaining fixed 250-step lookback.
-        
-        Args:
-            batch_size: Number of samples to generate
-            epoch: Current training epoch
-        Returns:
-            t: Current time indices [batch_size, 1]
-            r: Reference indices (t-250) [batch_size, 1]
-        """
+        progress = epoch / self.n_epochs
+        high = int(2500 * (1- progress) + 5000 * progress)
 
-
-        if epoch % 50: 
+        if epoch % 50 == 0: 
             s = -1 
-            t = torch.randint(low=0, high=4000, size=(batch_size,))
-            r = torch.clamp(t + 1000, min=0)  # Prevent negative indices
+            t = torch.randint(low=0, high=high-step, size=(batch_size,))
+            r = torch.clamp(t + step, max=5000)  #prevent indices above maximum
         else: 
             s = 1
-            t = torch.randint(low=1000, high=5000, size=(batch_size,))
-            r = torch.clamp(t - 1000, min=0)  # Prevent negative indices
+            t = torch.randint(low=step, high=high, size=(batch_size,))
+            r = torch.clamp(t - step, min=0)  # Prevent negative indices
 
         return t.unsqueeze(1), r.unsqueeze(1), s
+
+
     def get_space_and_time_for_idx(self, t_indices, r_indices, trajs): 
         train_trajs_tensor = torch.tensor(trajs)  
         
@@ -94,14 +89,44 @@ class MeanFlowMatchingTrainer(Trainer):
         return x_t, tau_t, x_r, tau_r
 
     def get_train_loss(self, epoch: int, **kwargs) -> torch.Tensor:
-        
-        # if epoch % 30 ==0 : 
-        #     trajs = self.clean_trajs
-        # else: 
-        #     trajs = self.noisy_trajs
-        trajs = self.noisy_trajs
 
-        t_idx, r_idx, s = self.sample_t_and_r_indices(self.batch_size, epoch)
+        if self.experiment == "Harmonic":
+            if epoch < self.n_epochs // 3: 
+                trajs = self.clean_trajs
+            elif  self.n_epochs // 3 < epoch <  self.n_epochs // 2:
+                if epoch % 2 == 0: 
+                    trajs = self.clean_trajs
+                else: 
+                    trajs = self.noisy_trajs
+            else: 
+                trajs = self.noisy_trajs
+
+
+        if self.experiment == "Anharmonic":
+            if epoch <= self.n_epochs // 5: 
+                trajs = self.clean_trajs
+            elif  self.n_epochs // 5 < epoch <   self.n_epochs // 2:
+                if epoch % 2 == 0: 
+                    trajs = self.clean_trajs
+                else: 
+                    trajs = self.noisy_trajs
+            else:
+                trajs = self.noisy_trajs
+
+        if self.experiment == "Keller_Segel":
+            if epoch <= self.n_epochs // 2: 
+                trajs = self.clean_trajs
+            elif  self.n_epochs // 2 < epoch <   3 * self.n_epochs // 4:
+                if epoch % 2 == 0: 
+                    trajs = self.clean_trajs
+                else: 
+                    trajs = self.noisy_trajs
+            else:
+                trajs = self.noisy_trajs
+
+        
+
+        t_idx, r_idx, s = self.sample_t_and_r_indices(batch_size=self.batch_size, epoch=epoch, step = self.step)
         x_t, tau_t, x_r, tau_r = self.get_space_and_time_for_idx(t_idx, r_idx, trajs)
         
         ep = torch.rand_like(tau_t)
@@ -122,25 +147,23 @@ class MeanFlowMatchingTrainer(Trainer):
         u_tgt = velocity + s * torch.norm(tau_t - tau_r) * dudt.detach()
         
 
-        mse_loss = torch.nn.functional.huber_loss(u, u_tgt)
-        
-        entropy = 0.0
-        # if epoch % 20 == 0:
-        #     entropy = compute_batch_entropy(self.model, x_t, tau_t, tau_r)
-        #     # compute_batch_covariance(self.model, x_t, tau_t, tau_r)
+        mse_loss = torch.nn.functional.mse_loss(u, u_tgt)
 
-        return mse_loss, entropy
+        total_loss =  mse_loss
+
+
+        return total_loss
 
 
 
     def train(self, **kwargs):
 
-        initial_clip = 0.1
-        final_clip = 1.0
+
+        initial_clip = 1.0
+        final_clip = 2.0
         clip_ramp_epochs = (self.n_epochs // 2) 
         self.model.to(self.device)
         opt = self.opt
-        training_entropy = []
         
         with tqdm(range(self.n_epochs), desc="Training") as pbar:
             for epoch in pbar:
@@ -151,9 +174,8 @@ class MeanFlowMatchingTrainer(Trainer):
                     current_clip = final_clip
                 
                 opt.zero_grad()
-                loss, entropy = self.get_train_loss(epoch, **kwargs)
+                loss = self.get_train_loss(epoch, **kwargs)
                 loss.backward()
-                training_entropy.append(entropy)
             
                 total_norm = clip_grad_norm_(
                     self.model.parameters(), 
@@ -166,4 +188,3 @@ class MeanFlowMatchingTrainer(Trainer):
                 opt.step()
 
         self.model.eval()
-        return training_entropy

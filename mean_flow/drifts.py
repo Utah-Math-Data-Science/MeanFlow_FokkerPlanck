@@ -14,15 +14,6 @@ compute_particle_diffs = torch.vmap(
         in_dims=(None, 0), out_dims=1
     )
 
-def active_swimmer(
-    xv: np.ndarray,
-    t: float,
-    gamma: float
-) -> np.ndarray:
-    """Active swimmer example."""
-    del t
-    x, v = xv
-    return np.array([-x**3 + v, -gamma*v])
 
 
 def harmonic_trap(
@@ -39,19 +30,6 @@ def harmonic_trap(
             + np.mean(particle_pos, axis=0)[None, :])
 
     return particle_forces.ravel()
-
-
-# def gaussian_interaction(
-#     xs: np.ndarray,
-#     A: float,
-#     r: float,
-#     N: int
-# ) -> np.ndarray:
-#     particle_diffs = xs[:, None, :] - xs[None, :, :]  # (N, N, d)
-#     dist_sq = np.sum(particle_diffs**2, axis=2)
-#     gauss_facs = np.exp(-dist_sq / (2*r**2))
-#     interaction = (A/(N*r**2)) * np.sum(particle_diffs * gauss_facs[:, :, None], axis=1)
-#     return interaction
 
 
 
@@ -111,3 +89,86 @@ def anharmonic_harmonic(
     diff_norms = np.sum(diff**2, axis=1)
     xbar = np.mean(particle_pos, axis=0)
     return np.ravel(-B*diff*diff_norms[:, None] + A*(particle_pos - xbar[None, :]))
+
+
+
+def keller_segel(x, t, chi, r, N, d=2):
+    particle_pos = x.reshape((N, d))
+    diffs = particle_pos[:, None, :] - particle_pos[None, :, :]
+    dist_sq = np.sum(diffs**2, axis=2)
+    gaussian = np.exp(-dist_sq / (2 * r**2))
+    
+    # Flip the sign here - particles should move toward concentration peaks
+    grad_c = -np.sum(diffs * gaussian[..., None] / r**2, axis=1)
+    drift = chi * grad_c
+    
+    return drift.ravel()
+
+# def keller_segel(
+#     x: np.ndarray,
+#     t: float,
+#     chi: float,      # Chemotactic sensitivity
+#     r: float,        # Interaction radius
+#     N: int,          # Number of particles
+#     d: int = 2       # Dimension (must be 2 for this implementation)
+# ) -> np.ndarray:
+#     """
+#     Computes the Keller-Segel drift for particles in 2D.
+#     """
+#     assert d == 2, "This implementation is for 2D only."
+#     particle_pos = x.reshape((N, d))
+    
+#     # Compute pairwise differences and distances
+#     diffs = particle_pos[:, None, :] - particle_pos[None, :, :]  # Shape (N, N, 2)
+#     dist_sq = np.sum(diffs**2, axis=2)
+    
+#     # Compute normalized Gaussian kernel and its gradient
+#     gaussian = np.exp(-dist_sq / (2 * r**2)) / (2 * np.pi * r**2)  # Normalized
+    
+#     # Gradient of concentration field (sum over all other particles)
+#     grad_c = np.sum(diffs * gaussian[..., None] / r**2, axis=1)  # Removed the minus sign
+    
+#     # Keller-Segel drift: chi * grad_c
+#     drift = chi * grad_c
+    
+#     return drift.ravel()
+
+
+
+
+
+# def keller_segel(
+#     x: np.ndarray,
+#     t: float,
+#     chi: float,      # Chemotactic sensitivity
+#     r: float,        # Interaction radius
+#     N: int,          # Number of particles
+#     d: int = 2       # Dimension (must be 2 for this implementation)
+# ) -> np.ndarray:
+#     """
+#     Computes the Keller-Segel drift for particles in 2D.
+#     Args:
+#         x: Flattened array of particle positions, shape (N*d,).
+#         t: Time (unused here, but kept for consistency with other drifts).
+#         chi: Chemotactic sensitivity.
+#         r: Interaction radius.
+#         N: Number of particles.
+#         d: Dimension (must be 2).
+#     Returns:
+#         Flattened array of drift forces, shape (N*d,).
+#     """
+#     assert d == 2, "This implementation is for 2D only."
+#     particle_pos = x.reshape((N, d))  # Shape (N, 2)
+
+#     # Compute pairwise differences and distances
+#     diffs = particle_pos[:, None, :] - particle_pos[None, :, :]  # Shape (N, N, 2)
+#     dist_sq = np.sum(diffs**2, axis=2)  # Shape (N, N)
+
+#     # Compute Gaussian kernel and its gradient
+#     gaussian = np.exp(-dist_sq / (2 * r**2))  # Shape (N, N)
+#     grad_c = -np.sum(diffs * gaussian[..., None] / r**2, axis=1)  # Shape (N, 2)
+
+#     # Keller-Segel drift: chi * grad_c
+#     drift = chi * grad_c  # Shape (N, 2)
+
+#     return drift.ravel()  # Flatten to (N*d,)

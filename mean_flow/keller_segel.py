@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 
 Device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
+
 ######## Configuation Parameters #########
 ## physical, non-forcing parameters
 d = 2
@@ -28,69 +29,78 @@ else:
     rng = np.random.default_rng()
 
 
-## harmonic system
-N = 50
-mask = np.ones(N*d)
-amp = lambda t: 2
-freq = 1
-compute_mut = lambda t: np.array([amp(t)*np.cos(np.pi*freq*t), amp(t)*np.sin(np.pi*freq*t)])
-drift = drifts.harmonic_trap
-force_args = (compute_mut, N, d)
-mu0 = np.tile(compute_mut(0), N)
-Noisy = True
-
-experiment = "Harmonic"
-
-sig0 = 0.25
+# better covariance 
+n_hidden = 4   
+n_x_neurons = 64            
+n_t_neurons = 16         
+n_epochs = 3000
 
 
-n_hidden = 2    
-n_x_neurons = 4             
-n_t_neurons = 64           
-n_epochs = 2500
+# better trajectories 
+# n_hidden = 4   
+# n_x_neurons = 128            
+# n_t_neurons = 4         
+# n_epochs = 3000
+
+
 
 learning_rate = 9e-5
 act = torch.nn.GELU          
 weight_decay = 5e-5
 step = 100
-batch_size = 256 
+batch_size = 512 
 
+
+
+
+
+
+## Keller-Segel parameters
+N = 20       
+d = 2        
+chi = 1.0    
+r = 0.5      
+sig0 = 0.25  
+Noisy = True 
+
+## Initial positions (random)
+mu0 = rng.normal(scale=sig0, size=N * d)  # Random initial positions
+
+## Drift and args
+drift = drifts.keller_segel
+force_args = (chi, r, N, d)  # Arguments for the drift functi
+
+experiment = "Keller_Segel"
 
 
 
 
 def construct_simulation():
-
     sim_params = {
-    "sig0": sig0,
-    "mu0": mu0,
-    "drift": drift,
-    "force_args": force_args,
-    "amp": amp,
-    "freq": freq,
-    "dt": dt,
-    "D": D,
-    "D_sqrt": np.sqrt(D),
-    "N": N,
-    "d": d,
-    "Noisy": Noisy, 
-    "learning_rate": learning_rate,
-    "weight_decay": weight_decay,
-    "n_hidden": n_hidden,
-    "n_x_neurons": n_x_neurons,
-    "n_t_neurons": n_t_neurons,
-    "n_epochs": n_epochs,
-    "act": act,
-    "rng": rng,
-    "experiment": experiment,
-    "n_time_steps": n_time_steps,
-    "batch_size": batch_size, 
-    "step": step
+        "sig0": sig0,
+        "mu0": mu0,
+        "drift": drift,  # Updated drift
+        "force_args": (chi, r, N, d),  # Keller-Segel args
+        "dt": dt,
+        "D": D,
+        "D_sqrt": np.sqrt(D),
+        "N": N,
+        "d": d,
+        "Noisy": Noisy,
+        "learning_rate": learning_rate,
+        "weight_decay": weight_decay,
+        "n_hidden": n_hidden,
+        "n_x_neurons": n_x_neurons,
+        "n_t_neurons": n_t_neurons,
+        "n_epochs": n_epochs,
+        "act": act,
+        "rng": rng,
+        "experiment": experiment,
+        "n_time_steps": n_time_steps,
+        "batch_size": batch_size,
+        "step": step
     }
-    
-    tot_params = {** sim_params}
-    sim = MarginalFBTM(tot_params)
-
+    sim = MarginalFBTM(sim_params)
     return sim
 
 
@@ -107,5 +117,5 @@ if __name__ == '__main__':
     positions, covs_datapoint_1,cov_comparison_1, t_space, entropy, mean_divergence = sim.mean_flow_trajectory_simulator(initial_conditions, 15, ts, model = learned_vector_field)
     sim.plot_trajectories_2d(learned_traj=positions, noisy_traj=noisy_trajs, clean_traj=clean_trajs, n_x_neurons = n_x_neurons, n_t_neurons = n_t_neurons, n_hidden = n_hidden)
     
-    # sim.plot_means_and_covs(covs_datapoint_1, cov_comparison_1, t_space)
+    sim.plot_means_and_covs(covs_datapoint_1, cov_comparison_1, t_space)
     sim.plot_entropy(mean_divergence, entropy, t_space)
